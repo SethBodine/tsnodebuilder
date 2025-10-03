@@ -4,8 +4,8 @@
 # Save as az-exitnode-simple.sh, chmod +x
 
 RG="tsnode-rg"
-VM_SIZE="Standard_B1ms"
-IMAGE="UbuntuLTS"
+VM_SIZE="Standard_B2ts_v2"
+IMAGE="Ubuntu2204"
 
 usage() {
   echo "Usage:"
@@ -36,8 +36,15 @@ list_regions() {
 
 list_vms() {
   check_az
-  az vm list -o table
+  echo "Fetching VMs..."
+  az vm list --query "[].{Name:name,RG:resourceGroup,Location:location,Power:powerState}" -o tsv | while read NAME RG LOC POWER; do
+    # Try to get public IP
+    PUB_IP=$(az network public-ip list --resource-group "$RG" --query "[?contains(ipConfiguration.id, '$NAME')].ipAddress" -o tsv)
+    FQDN=$(az network public-ip list --resource-group "$RG" --query "[?contains(ipConfiguration.id, '$NAME')].dnsSettings.fqdn" -o tsv)
+    echo -e "$NAME\t$RG\t$LOC\t$POWER\t$PUB_IP\t$FQDN"
+  done
 }
+
 
 build_vm() {
   HOSTNAME="$1"
@@ -87,6 +94,26 @@ build_vm() {
       --custom-data @"$CLOUD_INIT_FILE"
   fi
 
+  # --- Wait for VM to be healthy ---
+  echo "Waiting for VM to be running and provisioning succeeded..."
+  for i in $(seq 1 20); do
+    POWER_STATE=$(az vm get-instance-view \
+      --resource-group "$RG" \
+      --name "$HOSTNAME" \
+      --query "instanceView.statuses[?starts_with(code,'PowerState/')].displayStatus" \
+      -o tsv 2>/dev/null)
+    PROV_STATE=$(az vm show \
+      --resource-group "$RG" \
+      --name "$HOSTNAME" \
+      --query "provisioningState" -o tsv 2>/dev/null)
+    if [ "$POWER_STATE" = "VM running" ] && [ "$PROV_STATE" = "Succeeded" ]; then
+      echo "VM is running and provisioned."
+      break
+    fi
+    echo "VM not ready yet (Power: $POWER_STATE, Provisioning: $PROV_STATE), retrying..."
+    sleep 5
+  done
+
   echo "Setting CustomScript extension for Tailscale..."
   CMD="echo '$TSKEY' > /tmp/tskey; curl -fsSL https://tailscale.com/install.sh | sh; tailscale up --authkey=\$(cat /tmp/tskey) --advertise-exit-node --accept-routes; rm -f /tmp/tskey"
 
@@ -98,25 +125,25 @@ build_vm() {
     --protected-settings "{\"commandToExecute\":\"$CMD\"}"
 
   echo "VM '$HOSTNAME' created and Tailscale setup initiated."
-}
 
-# Wait for Tailscale daemon and report status
-echo "Waiting for Tailscale to start..."
-for i in $(seq 1 10); do
-  STATUS=$(az vm run-command invoke \
-    --resource-group "$RG" \
-    --name "$HOSTNAME" \
-    --command-id RunShellScript \
-    --scripts "tailscale status" \
-    --query "value[0].message" -o tsv 2>/dev/null)
-  if [ -n "$STATUS" ]; then
-    echo "Tailscale node is up:"
-    echo "$STATUS"
-    break
-  fi
-  echo "Tailscale not ready yet, retrying..."
-  sleep 5
-done
+  # Wait for Tailscale daemon and report status
+  echo "Waiting for Tailscale to start..."
+  for i in $(seq 1 10); do
+    STATUS=$(az vm run-command invoke \
+      --resource-group "$RG" \
+      --name "$HOSTNAME" \
+      --command-id RunShellScript \
+      --scripts "tailscale status" \
+      --query "value[0].message" -o tsv 2>/dev/null)
+    if [ -n "$STATUS" ]; then
+      echo "Tailscale node is up:"
+      echo "$STATUS"
+      break
+    fi
+    echo "Tailscale not ready yet, retrying..."
+    sleep 5
+  done
+}
 
 # --- CLI parsing ---
 if [ $# -lt 1 ]; then usage; fi
