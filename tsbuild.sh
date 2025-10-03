@@ -3,7 +3,6 @@
 # Simplified azure exit node builder
 # Save as az-exitnode-simple.sh, chmod +x
 
-RG="tsnode-rg"
 # Approx 15NZD per month
 VM_SIZE="Standard_B2ts_v2"
 # az vm image list --all --publisher Canonical --output table
@@ -79,8 +78,14 @@ build_vm() {
   fi
   echo "Detected public IP: $MYIP"
 
+  RG="tailscale-nodes-${REGION}"
+
+  echo "Ensuring resource group $RG exists in $REGION..."
+  RG_EXISTS=$(az group exists --name "$RG")
+  if [ "$RG_EXISTS" = "false" ]; then
   echo "Creating resource group $RG in $REGION..."
-  az group create --name "$RG" --location "$REGION" --output none
+    az group create --name "$RG" --location "$REGION" --output none
+  fi
 
   echo "Creating network security group..."
   NSG_NAME="${HOSTNAME}-nsg"
