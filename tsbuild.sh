@@ -1,18 +1,12 @@
 #!/usr/bin/env bash
 
 # Simplified azure exit node builder
-# Save as az-exitnode-simple.sh, chmod +x
-
-# Approx 15NZD per month
-VM_SIZE="Standard_B2ts_v2"
-# az vm image list --all --publisher Canonical --output table
-IMAGE="Ubuntu2204"
 
 usage() {
   echo "Usage:"
-  echo "  $0 --list regions"
-  echo "  $0 --list vms"
-  echo "  $0 --build -h HOSTNAME -r REGION [--ssh-key /path/to/key.pub]"
+  echo "bash  $0 --list regions"
+  echo "bash  $0 --list vms"
+  echo "bash  $0 --build -h HOSTNAME -r REGION [--ssh-key /path/to/key.pub]"
   exit 1
 }
 
@@ -70,6 +64,7 @@ build_vm() {
     exit 1
   fi
 
+  # --- Fetching Public IP for NSG ---
   echo "Fetching your public IP..."
   MYIP=$(curl -s ifconfig.co)
   if [ -z "$MYIP" ]; then
@@ -80,6 +75,7 @@ build_vm() {
 
   RG="tailscale-nodes-${REGION}"
 
+  # --- Ensure RG exists (per region) ---
   echo "Ensuring resource group $RG exists in $REGION..."
   RG_EXISTS=$(az group exists --name "$RG")
   if [ "$RG_EXISTS" = "false" ]; then
@@ -87,6 +83,31 @@ build_vm() {
     az group create --name "$RG" --location "$REGION" --output none
   fi
 
+  # --- Select VM size ---
+  VM_SIZE="Standard_B1s"
+  # VM_SIZE="Standard_B2ts_v2"
+  SIZE_EXISTS=$(az vm list-sizes -l "$REGION" --query "[?name=='$VM_SIZE']" -o tsv)
+  if [ -z "$SIZE_EXISTS" ]; then
+    echo "Default size $VM_SIZE not available in $REGION. Finding smallest alternative..."
+    VM_SIZE=$(az vm list-sizes -l "$REGION" \
+      --query "[?numberOfCores <= \`2\` && memoryInMb <= \`2048\`] | sort_by(@,&{mem:memoryInMb,cpu:numberOfCores})[0].name" \
+      -o tsv)
+    echo "Selected fallback size: $VM_SIZE"
+  else
+    echo "Using VM size: $VM_SIZE"
+  fi
+
+  # --- Select latest Ubuntu minimal LTS image dynamically ---
+  echo "Selecting latest Ubuntu minimal LTS image..."
+  IMAGE=$(az vm image list \
+    --publisher Canonical \
+    --offer "0001-com-ubuntu-server-minimal" \
+    --all \
+    --query "sort_by([].{urn:urn,version:version}, &version)[-1].urn" \
+    -o tsv)
+  echo "Selected image: $IMAGE"
+
+  # --- Create NSG ---
   echo "Creating network security group..."
   NSG_NAME="${HOSTNAME}-nsg"
   az network nsg create --resource-group "$RG" --name "$NSG_NAME" --location "$REGION" --output none
@@ -106,6 +127,7 @@ build_vm() {
     --access Allow \
     --output none
 
+  # --- Create VM ---
   echo "Creating VM..."
   DNS_LABEL="${HOSTNAME,,}"   # lowercase for DNS
   if [ -n "$SSH_KEY" ]; then
