@@ -136,6 +136,7 @@ build_vm() {
       --name "$HOSTNAME" \
       --image "$IMAGE" \
       --size "$VM_SIZE" \
+      --os-disk-size-gb 5 \
       --admin-username tsuser \
       --ssh-key-values "$SSH_KEY" \
       --custom-data @"$CLOUD_INIT_FILE" \
@@ -147,6 +148,7 @@ build_vm() {
       --name "$HOSTNAME" \
       --image "$IMAGE" \
       --size "$VM_SIZE" \
+      --os-disk-size-gb 5 \
       --admin-username tsuser \
       --generate-ssh-keys \
       --custom-data @"$CLOUD_INIT_FILE" \
