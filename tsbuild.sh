@@ -102,6 +102,7 @@ build_vm() {
     --output none
 
   echo "Creating VM..."
+  DNS_LABEL="${HOSTNAME,,}"   # lowercase for DNS
   if [ -n "$SSH_KEY" ]; then
     az vm create \
       --resource-group "$RG" \
@@ -111,7 +112,8 @@ build_vm() {
       --admin-username tsuser \
       --ssh-key-values "$SSH_KEY" \
       --custom-data @"$CLOUD_INIT_FILE" \
-      --nsg "$NSG_NAME"
+      --nsg "$NSG_NAME" \
+      --public-ip-address-dns-name "$DNS_LABEL"
   else
     az vm create \
       --resource-group "$RG" \
@@ -121,7 +123,8 @@ build_vm() {
       --admin-username tsuser \
       --generate-ssh-keys \
       --custom-data @"$CLOUD_INIT_FILE" \
-      --nsg "$NSG_NAME"
+      --nsg "$NSG_NAME" \
+      --public-ip-address-dns-name "$DNS_LABEL"
   fi
 
   # --- Wait for VM to be healthy ---
@@ -144,6 +147,22 @@ build_vm() {
     sleep 10
   done
 
+  echo "Fetching VM details..."
+  VM_PUBLIC_IP=$(az vm show -d \
+    --resource-group "$RG" \
+    --name "$HOSTNAME" \
+    --query "publicIps" -o tsv)
+
+  VM_FQDN=$(az vm show -d \
+    --resource-group "$RG" \
+    --name "$HOSTNAME" \
+    --query "fqdns" -o tsv)
+
+  echo "VM ready:"
+  echo "  Hostname: $HOSTNAME"
+  echo "  Public IP: $VM_PUBLIC_IP"
+  echo "  FQDN: $VM_FQDN"
+
   echo "Waiting for VM agent to be ready..."
   for i in $(seq 1 30); do
     AGENT_STATE=$(az vm get-instance-view \
@@ -159,6 +178,7 @@ build_vm() {
     echo "VM Agent state: $AGENT_STATE, retrying..."
     sleep 10
   done
+
 
 
   # --- Run Tailscale setup via extension ---
