@@ -47,7 +47,6 @@ list_vms() {
   done
 }
 
-
 build_vm() {
   HOSTNAME="$1"
   REGION="$2"
@@ -64,9 +63,6 @@ build_vm() {
     exit 1
   fi
 
-  echo "Creating resource group $RG in $REGION..."
-  az group create --name "$RG" --location "$REGION" --output none
-
   SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
   CLOUD_INIT_FILE="$SCRIPT_DIR/cloud-init.yaml"
 
@@ -74,6 +70,36 @@ build_vm() {
     echo "cloud-init.yaml not found in script folder ($SCRIPT_DIR)"
     exit 1
   fi
+
+  echo "Fetching your public IP..."
+  MYIP=$(curl -s ifconfig.co)
+  if [ -z "$MYIP" ]; then
+    echo "Could not determine public IP"
+    exit 1
+  fi
+  echo "Detected public IP: $MYIP"
+
+  echo "Creating resource group $RG in $REGION..."
+  az group create --name "$RG" --location "$REGION" --output none
+
+  echo "Creating network security group..."
+  NSG_NAME="${HOSTNAME}-nsg"
+  az network nsg create --resource-group "$RG" --name "$NSG_NAME" --location "$REGION" --output none
+
+  echo "Adding SSH inbound rule restricted to $MYIP..."
+  az network nsg rule create \
+    --resource-group "$RG" \
+    --nsg-name "$NSG_NAME" \
+    --name "AllowSSHFromMyIP" \
+    --priority 1000 \
+    --protocol Tcp \
+    --direction Inbound \
+    --source-address-prefixes "$MYIP" \
+    --source-port-ranges "*" \
+    --destination-address-prefixes "*" \
+    --destination-port-ranges 22 \
+    --access Allow \
+    --output none
 
   echo "Creating VM..."
   if [ -n "$SSH_KEY" ]; then
@@ -84,7 +110,8 @@ build_vm() {
       --size "$VM_SIZE" \
       --admin-username tsuser \
       --ssh-key-values "$SSH_KEY" \
-      --custom-data @"$CLOUD_INIT_FILE"
+      --custom-data @"$CLOUD_INIT_FILE" \
+      --nsg "$NSG_NAME"
   else
     az vm create \
       --resource-group "$RG" \
@@ -93,7 +120,8 @@ build_vm() {
       --size "$VM_SIZE" \
       --admin-username tsuser \
       --generate-ssh-keys \
-      --custom-data @"$CLOUD_INIT_FILE"
+      --custom-data @"$CLOUD_INIT_FILE" \
+      --nsg "$NSG_NAME"
   fi
 
   # --- Wait for VM to be healthy ---
