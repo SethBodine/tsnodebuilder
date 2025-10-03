@@ -4,7 +4,9 @@
 # Save as az-exitnode-simple.sh, chmod +x
 
 RG="tsnode-rg"
+# Approx 15NZD per month
 VM_SIZE="Standard_B2ts_v2"
+# az vm image list --all --publisher Canonical --output table
 IMAGE="Ubuntu2204"
 
 usage() {
@@ -111,9 +113,27 @@ build_vm() {
       break
     fi
     echo "VM not ready yet (Power: $POWER_STATE, Provisioning: $PROV_STATE), retrying..."
-    sleep 5
+    sleep 10
   done
 
+  echo "Waiting for VM agent to be ready..."
+  for i in $(seq 1 30); do
+    AGENT_STATE=$(az vm get-instance-view \
+      --resource-group "$RG" \
+      --name "$HOSTNAME" \
+      --query "instanceView.vmAgent.statuses[0].displayStatus" -o tsv 2>/dev/null)
+
+    if [ "$AGENT_STATE" = "Ready" ]; then
+      echo "VM Agent is ready."
+      break
+    fi
+
+    echo "VM Agent state: $AGENT_STATE, retrying..."
+    sleep 10
+  done
+
+
+  # --- Run Tailscale setup via extension ---
   echo "Setting CustomScript extension for Tailscale..."
   CMD="echo '$TSKEY' > /tmp/tskey; curl -fsSL https://tailscale.com/install.sh | sh; tailscale up --authkey=\$(cat /tmp/tskey) --advertise-exit-node --accept-routes; rm -f /tmp/tskey"
 
@@ -126,7 +146,7 @@ build_vm() {
 
   echo "VM '$HOSTNAME' created and Tailscale setup initiated."
 
-  # Wait for Tailscale daemon and report status
+  # --- Verify Tailscale started ---
   echo "Waiting for Tailscale to start..."
   for i in $(seq 1 10); do
     STATUS=$(az vm run-command invoke \
