@@ -5,6 +5,7 @@
 
 # Update as required
 VM_OFFER="ubuntu-24_04-lts-daily"
+VM_SIZE="Standard_B2ts_v2"
 
 usage() {
   echo "Usage:"
@@ -87,20 +88,6 @@ build_vm() {
     az group create --name "$RG" --location "$REGION" --output none
   fi
 
-  # --- Select VM size dynamically using az vm list-skus ---
-  echo "Selecting smallest available VM in $REGION..."
-  VM_SIZE=$(az vm list-skus \
-    --location "$REGION" \
-    --size Standard_B \
-    --query "sort_by([?capabilities[?name=='vCPUs' && value<=`2`] | [0] && capabilities[?name=='MemoryGB' && value<=`2`] | [0]], &capabilities[?name=='MemoryGB'].value)[0].name" \
-    -o tsv)
-
-  if [ -z "$VM_SIZE" ]; then
-    echo "No VM with 2 vCPU and 2GB RAM found in $REGION. Defaulting to Standard_B1s."
-    VM_SIZE="Standard_B1s"
-  fi
-  echo "Selected VM size: $VM_SIZE"
-
   # --- Select latest Ubuntu minimal LTS image dynamically ---
   echo "Selecting latest Ubuntu minimal LTS image..."
   IMAGE=$(az vm image list \
@@ -140,7 +127,6 @@ build_vm() {
       --name "$HOSTNAME" \
       --image "$IMAGE" \
       --size "$VM_SIZE" \
-      --os-disk-size-gb 5 \
       --admin-username tsuser \
       --ssh-key-values "$SSH_KEY" \
       --custom-data @"$CLOUD_INIT_FILE" \
@@ -152,7 +138,6 @@ build_vm() {
       --name "$HOSTNAME" \
       --image "$IMAGE" \
       --size "$VM_SIZE" \
-      --os-disk-size-gb 5 \
       --admin-username tsuser \
       --generate-ssh-keys \
       --custom-data @"$CLOUD_INIT_FILE" \
@@ -211,8 +196,6 @@ build_vm() {
     echo "VM Agent state: $AGENT_STATE, retrying..."
     sleep 10
   done
-
-
 
   # --- Run Tailscale setup via extension ---
   echo "Setting CustomScript extension for Tailscale..."
