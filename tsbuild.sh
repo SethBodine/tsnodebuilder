@@ -1,12 +1,16 @@
 #!/usr/bin/env bash
 
-# Simplified azure exit node builder
+# Simplified azure exit node builder (vibe coded because I'm lazy and I needed this done fast-ish)
+# TS Key can be found at https://login.tailscale.com/admin/machines/new-linux
+
+# Update as required
+VM_OFFER="ubuntu-24_04-lts-daily"
 
 usage() {
   echo "Usage:"
-  echo "bash  $0 --list regions"
-  echo "bash  $0 --list vms"
-  echo "bash  $0 --build -h HOSTNAME -r REGION [--ssh-key /path/to/key.pub]"
+  echo "  bash $0 --list regions"
+  echo "  bash $0 --list vms"
+  echo "  bash $0 --build -h HOSTNAME -r REGION [--ssh-key /path/to/key.pub]"
   exit 1
 }
 
@@ -83,25 +87,25 @@ build_vm() {
     az group create --name "$RG" --location "$REGION" --output none
   fi
 
-  # --- Select VM size ---
-  VM_SIZE="Standard_B1s"
-  # VM_SIZE="Standard_B2ts_v2"
-  SIZE_EXISTS=$(az vm list-sizes -l "$REGION" --query "[?name=='$VM_SIZE']" -o tsv)
-  if [ -z "$SIZE_EXISTS" ]; then
-    echo "Default size $VM_SIZE not available in $REGION. Finding smallest alternative..."
-    VM_SIZE=$(az vm list-sizes -l "$REGION" \
-      --query "[?numberOfCores <= \`2\` && memoryInMb <= \`2048\`] | sort_by(@,&{mem:memoryInMb,cpu:numberOfCores})[0].name" \
-      -o tsv)
-    echo "Selected fallback size: $VM_SIZE"
-  else
-    echo "Using VM size: $VM_SIZE"
+  # --- Select VM size dynamically using az vm list-skus ---
+  echo "Selecting smallest available VM in $REGION..."
+  VM_SIZE=$(az vm list-skus \
+    --location "$REGION" \
+    --size Standard_B \
+    --query "sort_by([?capabilities[?name=='vCPUs' && value<=`2`] | [0] && capabilities[?name=='MemoryGB' && value<=`2`] | [0]], &capabilities[?name=='MemoryGB'].value)[0].name" \
+    -o tsv)
+
+  if [ -z "$VM_SIZE" ]; then
+    echo "No VM with 2 vCPU and 2GB RAM found in $REGION. Defaulting to Standard_B1s."
+    VM_SIZE="Standard_B1s"
   fi
+  echo "Selected VM size: $VM_SIZE"
 
   # --- Select latest Ubuntu minimal LTS image dynamically ---
   echo "Selecting latest Ubuntu minimal LTS image..."
   IMAGE=$(az vm image list \
     --publisher Canonical \
-    --offer "0001-com-ubuntu-server-minimal" \
+    --offer "${VM_OFFER}" \
     --all \
     --query "sort_by([].{urn:urn,version:version}, &version)[-1].urn" \
     -o tsv)
